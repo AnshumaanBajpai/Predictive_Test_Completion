@@ -1,0 +1,309 @@
+---
+title: "Milestone Report (Data Science Capstone)"
+author: "Anshumaan Bajpai"
+date: "July 24, 2015"
+output: html_document
+---
+
+# Introduction \
+
+The aim of the datascience capstone project is to build a predictive text algorithm and this report provides a rudimentary summary of the dataset that I will be using to build the product and a brief description of my approach to the problem.
+
+Some general comments for the report are:
+
+- R code chunks are presented at the end so as to make the report concise
+- Use of technical terms has been avoided so that the report is easy to read for non-data scientist
+- For this analysis, profanities have not been removed since we are just trying to get an understanding of the data at hand. However, they will be removed for the prediction aspect of the modeling
+
+On downloading the data, it is found that there are four sets of three files. The four sets are files in 4 different languages. For this project we are using only the ones in english. The files that will be used in this project are as follows:
+
+```{r, section_1, echo=TRUE, eval=TRUE, tidy=TRUE, warning=FALSE, message=FALSE}
+
+library(knitr)
+library(tm) # the package for text mining
+library(RWeka) # a package to aid tm
+library(data.table)
+library(ggplot2) # package to plot
+library(wordcloud)
+
+
+# Set working directory
+setwd("C:/Users/Anshumaan/Desktop/Notre Dame (abajpai1@nd.edu)/Coursera/Paid/Data_Science_Specialization/Capstone")
+
+# Download the dataset if not downloaded already
+setInternet2(use = TRUE) # Needed to download from https links
+if(!file.exists("Coursera-SwiftKey.zip")){
+        download.file(url = "https://d396qusza40orc.cloudfront.net/dsscapstone/dataset/Coursera-SwiftKey.zip", destfile = "Coursera-SwiftKey.zip", quiet = TRUE)
+}
+
+# Unzipping the downloaded dataset
+if(!file.exists("Coursera-SwiftKey")){
+        unzip("Coursera-SwiftKey.zip", exdir = "Coursera-SwiftKey")
+}
+
+# Analyzing the contents of unzipped folder
+
+list.files("Coursera-SwiftKey/final/en_US", recursive = TRUE)
+
+# We need to work with en_US files.
+```
+
+The three files mentioned above will be used to build the entire prediction algorithm. However, it is important to get some general idea about the text files that are being dealt with. Some basic information about the three files are:
+
+```{r, section_2, echo=TRUE, eval=TRUE, cache=TRUE, warning=FALSE, message=FALSE}
+
+## Analyzing en_US.blogs.txt
+
+# Size of en_US.blogs.txt in Mb
+s_blogs <- file.size("Coursera-SwiftKey/final/en_US/en_US.blogs.txt")/(1024*1024)
+
+# Connection to the blog
+con_blogs <- file("Coursera-SwiftKey/final/en_US/en_US.blogs.txt","rb",encoding="UTF-8")
+
+# Read the file as a characted vector
+blogs_r = readLines(con_blogs, skipNul = TRUE, warn = FALSE)
+
+# Close the connection
+close(con_blogs)
+
+# No of lines in en_US.blogs.txt
+lines_blogs_r <- length(blogs_r)
+
+# Ensure all the UTF-8 are converted to ASCII
+blogs_r <- iconv(blogs_r, to = "ASCII", sub = "")
+
+cat("The file en_US.blogs.txt is ", s_blogs, "Mb in size and has ", lines_blogs_r, " lines.")
+
+## Reading in news and twitter files
+
+# News
+s_news <- file.size("Coursera-SwiftKey/final/en_US/en_US.news.txt")/(1024*1024)
+con_news <- file("Coursera-SwiftKey/final/en_US/en_US.news.txt","rb",encoding="UTF-8")
+news_r = readLines(con_news, skipNul = TRUE, warn = FALSE)
+close(con_news)
+lines_news_r <- length(news_r)
+news_r <- iconv(news_r, to = "ASCII", sub = "")
+cat("The file en_US.news.txt is ", s_news, "Mb in size and has ", lines_news_r, " lines.")
+
+# twitter
+s_twitter <- file.size("Coursera-SwiftKey/final/en_US/en_US.twitter.txt")/(1024*1024)
+con_twitter <- file("Coursera-SwiftKey/final/en_US/en_US.twitter.txt","rb",encoding="UTF-8")
+twitter_r = readLines(con_twitter, skipNul = TRUE, warn = FALSE)
+close(con_twitter)
+lines_twitter_r <- length(twitter_r)
+twitter_r <- iconv(twitter_r, to = "ASCII", sub = "")
+cat("The file en_US.twitter.txt is ", s_twitter, "Mb in size and has ", lines_twitter_r, " lines.")
+```
+
+Now we look at each of the files and do some exploratory analysis on each file. Since this analysis is about predicting the next word, the stopwords have not been removed from the text.
+
+
+# Basic Analysis
+
+Now that we have looked at the summary of the full documents, we look only at a subset of the complete datafiles to build our model. We take 5% of the data from each file and save it to training files and the rest to testing files.
+\newpage
+
+# Modeling with small training set
+```{r, section_3, echo=TRUE, eval=TRUE, cache=TRUE}
+
+set.seed(123) # Setting the seed so as to have reproducibility
+
+# Saving blogs data
+fr = 0.05
+train_blogs <- sample(1:length(blogs_r), floor(fr*length(blogs_r)), replace=FALSE) # select indices
+writeLines(blogs_r[train_blogs], con = "Coursera-SwiftKey/final/en_US/blogs_train.txt") # training data
+writeLines(blogs_r[-train_blogs], con = "Coursera-SwiftKey/final/en_US/blogs_test.txt") # testing data
+
+# Saving news data
+train_news <- sample(1:length(news_r), floor(fr*length(news_r)), replace=FALSE)
+writeLines(news_r[train_news], con = "Coursera-SwiftKey/final/en_US/news_train.txt")
+writeLines(news_r[-train_news], con = "Coursera-SwiftKey/final/en_US/news_test.txt")
+
+# Saving twitter data
+train_twitter <- sample(1:length(twitter_r), floor(fr*length(twitter_r)), replace=FALSE)
+writeLines(twitter_r[train_twitter], con = "Coursera-SwiftKey/final/en_US/twitter_train.txt")
+writeLines(twitter_r[-train_twitter], con = "Coursera-SwiftKey/final/en_US/twitter_test.txt")
+
+# Deleting the large datasets to save memory
+
+rm(blogs_r, news_r, twitter_r)
+```
+
+```{r, section_4, eval=TRUE, echo=TRUE, warning=FALSE, message=FALSE, cache=TRUE}
+## In this section, we read in the sampled training files for each
+
+# Reading training blog
+con_blogs_train <- file("Coursera-SwiftKey/final/en_US/blogs_train.txt","rb",encoding="UTF-8")
+blogs_r_train = readLines(con_blogs_train, skipNul = TRUE, warn = FALSE)
+close(con_blogs_train)
+
+# Reading training news
+con_news_train <- file("Coursera-SwiftKey/final/en_US/news_train.txt","rb",encoding="UTF-8")
+news_r_train = readLines(con_news_train, skipNul = TRUE, warn = FALSE)
+close(con_news_train)
+
+# Reading training twitter
+con_twitter_train <- file("Coursera-SwiftKey/final/en_US/twitter_train.txt","rb",encoding="UTF-8")
+twitter_r_train = readLines(con_twitter_train, skipNul = TRUE, warn = FALSE)
+close(con_twitter_train)
+
+merged_data <- c(blogs_r_train, news_r_train, twitter_r_train)
+rm(blogs_r_train, news_r_train, twitter_r_train)
+```
+
+
+## Corpus
+For further analysis, a corpus is prepared by merging the three training datasets. Further analysis for n-grams is performed on this corpus. Since the overall goal is to do text prediction, we do not remove the stopwords in this as they are critical text prediction component and aid in sentence formation.
+
+```{r, section_5, echo=TRUE, eval=TRUE, cache=TRUE, warning=FALSE, message=FALSE}
+# generating a corpus
+merged_data <- gsub("\\.+", "\\.", merged_data)
+merged_data <- gsub("''|#", "", merged_data)
+merged_data <- gsub(" [Aa]\\.[Mm]", "am", merged_data)
+merged_data <- gsub(" [Pp]\\.[Mm]", "pm", merged_data)
+
+corpus_Capstone <- VCorpus(VectorSource(merged_data))
+corpus_Capstone <- tm_map(corpus_Capstone, stripWhitespace) # Stripping excess whitespace
+corpus_Capstone <- tm_map(corpus_Capstone, content_transformer(tolower)) # converting to lowercase
+
+# Unigram tokenizer
+UnigramTokenizer <- function(x){
+        NGramTokenizer(x, Weka_control(delimiters = " .~(),;:\"?!/-", min = 1, max = 1))
+}
+
+# Bigram tokenizer
+BigramTokenizer <- function(x){
+        NGramTokenizer(x, Weka_control(delimiters = " .~(),;:\"?!/-", min = 2, max = 2))
+}
+
+# trigram tokenizer look at period(.)
+TrigramTokenizer <- function(x){
+        NGramTokenizer(x, Weka_control(delimiters = " .~(),;:\"?!/-", min = 3, max = 3))
+}
+
+# quadgram tokenizer
+QuadgramTokenizer <- function(x){
+        NGramTokenizer(x, Weka_control(delimiters = " .~(),;:\"?!/-", min = 4, max = 4))
+}
+
+# Creating n-grams
+unigrams <- DocumentTermMatrix(corpus_Capstone, control = list(tokenize = UnigramTokenizer, removeNumbers=TRUE)) # Generating Unigrams
+bigrams <- DocumentTermMatrix(corpus_Capstone, control = list(tokenize = BigramTokenizer, removeNumbers=TRUE))
+trigrams <- DocumentTermMatrix(corpus_Capstone, control = list(tokenize = TrigramTokenizer, removeNumbers=TRUE))
+quadgrams <- DocumentTermMatrix(corpus_Capstone, control = list(tokenize = QuadgramTokenizer, removeNumbers=TRUE))
+
+```
+
+Here we look at the most frequently occuring unigram, bigrams and trigrams, quadgrams.
+
+```{r, section_6, eval=TRUE, echo=TRUE, cache=FALSE, warning=FALSE, message=FALSE}
+ls()
+#unigrams_rmsp <- as.matrix(unigrams)
+unigrams_rmsp <- as.matrix(removeSparseTerms(unigrams, 0.999953))
+uni_freq <- sort(colSums(unigrams_rmsp), decreasing = TRUE)
+rm(unigrams_rmsp)
+cat("Top 50 most frequent unigrams based on a 5% sampling of entire english dataset is")
+head(uni_freq, n = 50)
+```
+
+```{r, section_7, eval=TRUE, echo=TRUE, cache=FALSE, warning=FALSE, message=FALSE}
+
+#bigrams_rmsp <- as.matrix(bigrams)
+bigrams_rmsp <- as.matrix(removeSparseTerms(bigrams, 0.999))
+bi_freq <- sort(colSums(bigrams_rmsp), decreasing = TRUE)
+rm(bigrams_rmsp)
+cat("Top 30 most frequent bigrams based on a 5% sampling of entire english dataset is")
+head(bi_freq, n = 30)
+```
+
+```{r, section_8, eval=TRUE, echo=TRUE, cache=TRUE, warning=FALSE, message=FALSE}
+
+#trigrams_rmsp <- as.matrix(trigrams)
+trigrams_rmsp <- as.matrix(removeSparseTerms(trigrams, 0.999))
+tri_freq <- sort(colSums(trigrams_rmsp), decreasing = TRUE)
+rm(trigrams_rmsp)
+cat("Top 15 most frequent trigrams based on a 5% sampling of entire english dataset is")
+head(tri_freq, n = 15)
+```
+
+```{r, section_9, eval=TRUE, echo=TRUE, cache=TRUE, warning=FALSE, message=FALSE}
+
+#quadgrams_rmsp <- as.matrix(quadgrams)
+quadgrams_rmsp <- as.matrix(removeSparseTerms(quadgrams, 0.999))
+quad_freq <- sort(colSums(quadgrams_rmsp), decreasing = TRUE)
+rm(quadgrams_rmsp)
+cat("Top 15 most frequent quadgrams based on a 5% sampling of entire english dataset is")
+head(quad_freq, n = 10)
+```
+
+
+## Creating data tables
+```{r, section_10, eval=TRUE, echo=TRUE, cache=FALSE}
+## Creating datatables and saving them
+uni_dt <- data.table(term=names(uni_freq),freq=uni_freq)
+bi_dt <- data.table(term=names(bi_freq),freq=bi_freq)
+tri_dt <- data.table(term=names(tri_freq),freq=tri_freq)
+quad_dt <- data.table(term=names(quad_freq),freq=quad_freq)
+
+## Ordering according to the key
+setkey(uni_dt, term)
+setkey(bi_dt, term)
+setkey(tri_dt, term)
+setkey(quad_dt, term)
+## Adding a probability column
+uni_dt <- uni_dt[,prob:= freq/sum(freq)]
+bi_dt <- bi_dt[,prob:= freq/sum(freq)]
+tri_dt <- tri_dt[,prob:= freq/sum(freq)]
+quad_dt <- quad_dt[,prob:= freq/sum(freq)]
+
+head(uni_dt, n= 3)
+head(bi_dt, n= 3)
+head(tri_dt, n= 3)
+head(quad_dt, n= 3)
+## Saving the data tables
+
+save(uni_dt, bi_dt, tri_dt, quad_dt, file = "Coursera-SwiftKey/final/en_US/ngram_dfs")
+
+```
+
+
+## Reading the data tables
+```{r, section_11, eval=TRUE, echo=TRUE, cache=FALSE}
+
+load(file = "Coursera-SwiftKey/final/en_US/ngram_dfs")
+
+dim(uni_dt)
+dim(bi_dt)
+dim(tri_dt)
+dim(quad_dt)
+
+```
+
+
+## A function to calculate probability for next word
+```{r, section_12, eval=FALSE, echo=TRUE, cache=FALSE}
+P <- function(s_string, word){
+        string_vec = unlist(strsplit(s_string, " "))
+        w_n <- word
+        w_n1 <- paste(tail(string_vec, n=1), collapse = " ")
+        w_n1n2 <- paste(tail(string_vec, n=2), collapse = " ")
+        w_n1n2n3 <- paste(tail(string_vec, n=3), collapse = " ")
+        
+        p_uni <- ifelse(any(uni_dt[,term] == word), uni_dt[match(word, term), prob], 0)
+        bi_g <- paste(w_n1, word, sep = " ")
+        print(bi_g)
+        p_bi <- ifelse(any(bi_dt[,term] == bi_g), bi_dt[match(bi_g, term), freq]/uni_dt[match(w_n1, term), freq], 0)
+        tri_g <- paste(w_n1n2, word, sep = " ")
+        p_tri <- ifelse(any(tri_dt[,term] == tri_g), tri_dt[match(tri_g, term), freq]/bi_dt[match(w_n1n2, term), freq], 0)
+        quad_g <- paste(w_n1n2n3, word, sep = " ")
+        p_quad <- ifelse(any(quad_dt[,term] == quad_g), quad_dt[match(quad_g, term), freq]/tri_dt[match(w_n1n2n3, term), freq], 0)
+
+        return(c(p_uni, p_bi, p_tri, p_quad))
+}
+print(2)        
+print(P("all of Adam Sandler's", "movies"))
+print(P("all of Adam Sandler's", "stories"))
+print(P("all of Adam Sandler's", "novels"))
+print(P("all of Adam Sandler's", "pictures"))
+
+```

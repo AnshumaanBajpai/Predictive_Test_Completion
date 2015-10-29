@@ -1,0 +1,384 @@
+---
+title: "Final Software Design Report (Data Science Capstone)"
+author: "Anshumaan Bajpai"
+date: "August 16, 2015"
+output: html_document
+---
+
+# Introduction \
+
+The aim of the datascience capstone project is to build a predictive text algorithm and this report provides a complete description of the work carried out on each object.
+
+On downloading the data, it is found that there are four sets of three files. The four sets are files in 4 different languages. For this project we are using only the ones in english. The files that will be used in this project are as follows:
+
+
+```{r, section_1_download, echo=TRUE, eval=TRUE, tidy=TRUE, warning=FALSE, message=FALSE}
+
+library(knitr)
+library(tm) # the package for text mining
+library(RWeka) # a package to aid tm
+library(data.table)
+library(ggplot2) # package to plot
+library(openNLP)
+library(NLP)
+library(SnowballC)
+library(dplyr)
+library(slam)
+
+# Set working directory
+setwd("C:/Users/Anshumaan/Desktop/Notre Dame (abajpai1@nd.edu)/Coursera/Paid/Data_Science_Specialization/Capstone")
+
+# Download the dataset if not downloaded already
+setInternet2(use = TRUE) # Needed to download from https links
+if(!file.exists("Coursera-SwiftKey.zip")){
+        download.file(url = "https://d396qusza40orc.cloudfront.net/dsscapstone/dataset/Coursera-SwiftKey.zip", destfile = "Coursera-SwiftKey.zip", quiet = TRUE)
+}
+
+# Unzipping the downloaded dataset
+if(!file.exists("Coursera-SwiftKey")){
+        unzip("Coursera-SwiftKey.zip", exdir = "Coursera-SwiftKey")
+}
+
+# Analyzing the contents of unzipped folder
+
+list.files("Coursera-SwiftKey/final/en_US", recursive = TRUE)
+
+# We need to work with en_US files.
+```
+
+
+The three files mentioned above will be used to build the entire prediction algorithm. However, it is important to get some general idea about the text files that are being dealt with. Some basic information about the three files are:
+
+
+```{r, section_2_analysis, echo=TRUE, eval=TRUE, cache=TRUE, warning=FALSE, message=FALSE}
+
+## Analyzing en_US.blogs.txt
+
+# Size of en_US.blogs.txt in Mb
+s_blogs <- file.size("Coursera-SwiftKey/final/en_US/en_US.blogs.txt")/(1024*1024)
+
+# Connection to the blog
+con_blogs <- file("Coursera-SwiftKey/final/en_US/en_US.blogs.txt","rb",encoding="UTF-8")
+
+# Read the file as a characted vector
+blogs_r = readLines(con_blogs, skipNul = TRUE, warn = FALSE)
+
+# Close the connection
+close(con_blogs)
+
+# No of lines in en_US.blogs.txt
+lines_blogs_r <- length(blogs_r)
+
+# Ensure all the UTF-8 are converted to ASCII
+blogs_r <- iconv(blogs_r, to = "ASCII", sub = "")
+
+cat("The file en_US.blogs.txt is ", s_blogs, "Mb in size and has ", lines_blogs_r, " lines.")
+
+## Reading in news and twitter files
+
+# News
+s_news <- file.size("Coursera-SwiftKey/final/en_US/en_US.news.txt")/(1024*1024)
+con_news <- file("Coursera-SwiftKey/final/en_US/en_US.news.txt","rb",encoding="UTF-8")
+news_r = readLines(con_news, skipNul = TRUE, warn = FALSE)
+close(con_news)
+lines_news_r <- length(news_r)
+news_r <- iconv(news_r, to = "ASCII", sub = "")
+cat("The file en_US.news.txt is ", s_news, "Mb in size and has ", lines_news_r, " lines.")
+
+# twitter
+s_twitter <- file.size("Coursera-SwiftKey/final/en_US/en_US.twitter.txt")/(1024*1024)
+con_twitter <- file("Coursera-SwiftKey/final/en_US/en_US.twitter.txt","rb",encoding="UTF-8")
+twitter_r = readLines(con_twitter, skipNul = TRUE, warn = FALSE)
+close(con_twitter)
+lines_twitter_r <- length(twitter_r)
+twitter_r <- iconv(twitter_r, to = "ASCII", sub = "")
+cat("The file en_US.twitter.txt is ", s_twitter, "Mb in size and has ", lines_twitter_r, " lines.")
+```
+
+
+Now that we have looked at the summary of the full documents, we look only at a subset of the complete datafiles to build our model. We take .05% of the data from each file and save it to training files. We use only these files to build our model
+
+
+# Modeling with small training set
+```{r, section_3_subset, echo=TRUE, eval=TRUE, cache=TRUE, warning=FALSE, message=FALSE}
+
+set.seed(123) # Setting the seed so as to have reproducibility
+
+# Saving blogs data
+fr = 0.1
+train_blogs <- sample(1:length(blogs_r), floor(fr*length(blogs_r)), replace=FALSE) # select indices
+writeLines(blogs_r[train_blogs], con = "Coursera-SwiftKey/final/en_US/blogs_train.txt") # training data
+
+# Saving news data
+train_news <- sample(1:length(news_r), floor(fr*length(news_r)), replace=FALSE)
+writeLines(news_r[train_news], con = "Coursera-SwiftKey/final/en_US/news_train.txt")
+
+# Saving twitter data
+train_twitter <- sample(1:length(twitter_r), floor(fr*length(twitter_r)), replace=FALSE)
+writeLines(twitter_r[train_twitter], con = "Coursera-SwiftKey/final/en_US/twitter_train.txt")
+```
+
+
+Now we read the training files that we have created
+
+
+```{r, section_4_read, eval=TRUE, echo=TRUE, warning=FALSE, message=FALSE, cache=TRUE}
+## In this section, we read in the sampled training files for each
+
+# Reading training blog
+con_blogs_train <- file("Coursera-SwiftKey/final/en_US/blogs_train.txt","rb",encoding="UTF-8")
+blogs_r_train = readLines(con_blogs_train, skipNul = TRUE, warn = FALSE)
+close(con_blogs_train)
+
+# Reading training news
+con_news_train <- file("Coursera-SwiftKey/final/en_US/news_train.txt","rb",encoding="UTF-8")
+news_r_train = readLines(con_news_train, skipNul = TRUE, warn = FALSE)
+close(con_news_train)
+
+# Reading training twitter
+con_twitter_train <- file("Coursera-SwiftKey/final/en_US/twitter_train.txt","rb",encoding="UTF-8")
+twitter_r_train = readLines(con_twitter_train, skipNul = TRUE, warn = FALSE)
+close(con_twitter_train)
+
+```
+
+
+Now we load the check if we have any unnecessary objects. We remove the object that we believe will not be needed for further analysis.
+
+
+```{r, check_1}
+rm(blogs_r, con_blogs, con_blogs_train, news_r, con_news, con_news_train, twitter_r, con_twitter_train, con_twitter, lines_twitter_r, lines_news_r, lines_blogs_r, s_twitter, s_news, s_blogs)
+ls()
+```
+
+
+Now we try to modify the subset produced previously and make changes and ensure that random punctuation marks are removed. Any kind of profanity if removed and substituted by the word "profanity". Emoticons are removed and substituted by the word  "emoticons". Attempt has been made to treat number as "num" and any monetary amount has been replaced by "dollaramount". 
+
+```{r, section_5_merge, eval=TRUE, echo=TRUE, cache=TRUE, warning=FALSE, message=FALSE}
+
+sub_char <- function(data){
+        data <- gsub("\\_+", "", data)
+        data <- gsub(" [Uu][\\.][Ss][\\.][Aa]?[\\.]?", " usa.", data)
+        data <- gsub("\\$+", "$", data)
+        data <- gsub(" & ", " and ", data)
+        data <- gsub(" \\'+|\\+' ", " ", data)
+        data <- gsub(" \\*+|\\*+ ", " ", data)
+        data <- gsub(" [Aa]\\.[Mm][\\.]?", " am.", data)
+        data <- gsub(" [Pp]\\.[Mm][\\.]?", " pm.", data)
+        data <- gsub("!+|\\^+", ". ", data)
+        data <- gsub("=+|\\-+", " ", data)
+        data <- gsub("[0-9]*\\-*>+|<+\\-*[0-9]*", " ", data)
+        data <- gsub("[\\)|\\(]:", " ", data)
+        data <- gsub(" [\\(|\\)| D| Pp|\\/][\\']?[\\-]?[:|;]", " <emoticon> ", data)
+        data <- gsub(" [:|;][\\-]?[\\']?[\\(|\\)|D |Pp |\\/]+", " <emoticon> ", data)
+        data <- gsub(" *\\?+", ".", data)
+        data <- gsub("#+", " hashtag ", data)
+        data <- gsub("[a-zA-Z]*[Ff][Uu][Cc][Kk][a-zA-Z]*|[Cc][Uu][Nn][Tt]|[Ss][Hh][Ii][Tt]|[Cc][Oo][Cc][Kk][Ss][Uu][Cc][Kk][Ee][Rr]|[Pp][Ii][Ss][Ss]|[Tt][Ii][Tt][Ss]", " <profanity> ", data)
+        data <- gsub("[a-zA-Z]+\\*+[a-zA-Z]+", " <profanity> ", data)
+        data <- gsub("\\$+ *[0-9]+[ |,|.]?[0-9]*", " <dollaramount> ", data)
+        data <- gsub(" [0-9][0-9]?[\\/][0-9][0-9]?[\\/][0-9][0-9][0-9]?[0-9]?", " <date> ", data)
+        data <- gsub("[0-9]+\\.?[0-9]+|[0-9]+", " <num> ", data)
+        data <- gsub(" *\\.+ *\\.*", "\\. ", data)
+        data <- gsub(" \\'+ ", " ", data)
+        data <- gsub("%", " ", data)
+        
+        return(data)
+}
+
+sub_blogs <- unlist(strsplit(sub_char(blogs_r_train), "\\."))
+sub_news <- unlist(strsplit(sub_char(news_r_train), "\\."))
+sub_twitter <- unlist(strsplit(sub_char(twitter_r_train), "\\."))
+
+
+writeLines(sub_blogs, con = "Coursera-SwiftKey/final/en_US/s_blogs.txt")
+writeLines(sub_news, con = "Coursera-SwiftKey/final/en_US/s_news.txt")
+writeLines(sub_twitter, con = "Coursera-SwiftKey/final/en_US/s_twitter.txt")
+merged_data <- c(sub_blogs, sub_news, sub_twitter)
+```
+
+Now we check again if we have any additional unnecessary data objects loaded in the workspace. We remove the ones that we do not need. Ideally, we should only have merged_data as the data object and few other functions
+CHECK OBJECTS
+
+```{r, check_2, warning=FALSE, message=FALSE}
+rm(blogs_r_train, news_r_train, twitter_r_train, fr, train_twitter, train_news, train_blogs, sub_twitter, sub_news, sub_blogs)
+ls()
+```
+
+Now we create a corpus from the merged_data dataset. In the next section we define all the functions needed to create the corpus.
+
+```{r, section_6_corpus_fun, eval=TRUE, echo=TRUE, warning=FALSE, message=FALSE, cache=TRUE}
+
+corpus_Capstone <- VCorpus(VectorSource(merged_data))
+corpus_Capstone <- tm_map(corpus_Capstone, stripWhitespace) # Stripping excess whitespace
+corpus_Capstone <- tm_map(corpus_Capstone, content_transformer(tolower)) # converting to lowercase
+
+
+# Unigram tokenizer
+UnigramTokenizer <- function(x){
+        NGramTokenizer(x, Weka_control(delimiters = " .~(),;:\"?!/-", min = 1, max = 1))
+}
+
+# Bigram tokenizer
+BigramTokenizer <- function(x){
+        NGramTokenizer(x, Weka_control(delimiters = " .~(),;:\"?!/-", min = 2, max = 2))
+}
+
+# trigram tokenizer look at period(.)
+TrigramTokenizer <- function(x){
+        NGramTokenizer(x, Weka_control(delimiters = " .~(),;:\"?!/-", min = 3, max = 3))
+}
+
+# quadgram tokenizer
+QuadgramTokenizer <- function(x){
+        NGramTokenizer(x, Weka_control(delimiters = " .~(),;:\"?!/-", min = 4, max = 4))
+}
+```
+
+
+Now we define functions to create n-gram dataframes. The goal is to have just the final data_table in the memory so as to save space for other all the n-grams that we create.
+
+## Now we create unigrams
+
+
+```{r, section_7_unigm, echo=TRUE, eval=TRUE, cache=TRUE, warning=FALSE, message=FALSE}
+
+## Function to create unigram datatable
+unigrams <- DocumentTermMatrix(corpus_Capstone, control = list(wordLengths=c(2,Inf),tokenize = UnigramTokenizer, removeNumbers=TRUE)) # Generating Unigrams
+```
+
+## Now we create bigrams
+
+```{r, section_7_bigm, echo=TRUE, eval=TRUE, cache=TRUE, warning=FALSE, message=FALSE}
+## Function to create bigram datatable
+bigrams <- DocumentTermMatrix(corpus_Capstone, control = list(tokenize = BigramTokenizer, removeNumbers=TRUE)) # Generating Bigrams
+```
+
+
+## Now we create trigrams
+
+
+```{r, section_7_trigm, echo=TRUE, eval=TRUE, cache=TRUE, warning=FALSE, message=FALSE}
+## Function to create trigram datatable
+trigrams <- DocumentTermMatrix(corpus_Capstone, control = list(tokenize = TrigramTokenizer, removeNumbers=TRUE)) # Generating Trigrams
+```
+
+
+## Now we create quadgrams
+
+
+```{r, section_7_quadgms, echo=TRUE, eval=TRUE, cache=TRUE, warning=FALSE, message=FALSE}
+## Function to create quadgrams datatable
+quadgrams <- DocumentTermMatrix(corpus_Capstone, control = list(tokenize = QuadgramTokenizer, removeNumbers=TRUE)) # Generating Quadgrams
+```
+
+
+Object check
+
+```{r, check_3, warning=FALSE, message=FALSE}
+rm(merged_data)
+rm(corpus_Capstone)
+ls()
+```
+
+
+## Next up we write a general function to create the data tables
+
+
+```{r, section_8_dt, eval=TRUE, cache=FALSE, echo=TRUE, warning=FALSE, message=FALSE}
+
+## Function to create datatable
+create_dt <- function(x, n){
+        colTotals <- col_sums(x)
+        colNames <- colnames(x)
+        con_sub <- colTotals > n
+        dt <- data.table(term=colNames[con_sub], freq=colTotals[con_sub])
+        setkey(dt, term)
+        return(dt)
+}
+```
+
+
+# Unigrams
+Here we remove the sparse terms and create unigram data table
+
+
+```{r, section_9_unidt,  eval=TRUE, cache=FALSE, echo=TRUE, warning=FALSE, message=FALSE}
+
+## Generating Unigram data tables
+uni <- create_dt(unigrams, 0)
+head(uni, n=30)
+dim(uni)
+
+## Save the uni
+save(uni, file = "Coursera-SwiftKey/final/en_US/unigram_dts")
+format(object.size(uni), units = "Mb")
+rm(unigrams)
+```
+
+
+# Bigrams
+We remove sparse terms from bigrams and create the data table.
+
+```{r, section_9_bidt, eval=TRUE, cache=FALSE, echo=TRUE, warning=FALSE, message=FALSE}
+
+## Generating Bigram data tables
+bi <- create_dt(bigrams, 1)
+bi$uni <- lapply(strsplit(bi$term, " "), newcol <- function(x){
+        return(paste(x[-2], collapse = " "))
+        })
+head(bi, n=30)
+dim(bi)
+
+## Save the bi
+save(bi, file = "Coursera-SwiftKey/final/en_US/bigram_dts")
+format(object.size(bi), units = "Mb")
+rm(bigrams)
+ls()
+```
+
+
+# Trigrams
+We remove sparse terms from trigrams
+
+```{r, section_9_tridt, eval=TRUE, cache=FALSE, echo=TRUE, warning=FALSE, message=FALSE}
+
+## Generating Trigram data tables
+tri <- create_dt(trigrams, 1)
+tri$bi <- lapply(strsplit(tri$term, " "), newcol <- function(x){
+        return(paste(x[-3], collapse = " "))
+        })
+
+head(tri, n=30)
+dim(tri)
+
+## Save the tri
+save(tri, file = "Coursera-SwiftKey/final/en_US/trigram_dts")
+format(object.size(tri), units = "Mb")
+rm(trigrams)
+ls()
+```
+
+
+
+# Quadgrams
+Removing sparse terms and saving as a data table
+
+```{r, section_9_quaddt, eval=TRUE, cache=FALSE, echo=TRUE, warning=FALSE, message=FALSE}
+
+## Generating Quadgram data tables
+quad <- create_dt(quadgrams, 1)
+quad$tri <- lapply(strsplit(quad$term, " "), newcol <- function(x){
+        return(paste(x[-4], collapse = " "))
+        })
+
+head(quad, n=30)
+dim(quad)
+
+## Save the quad
+save(quad, file = "Coursera-SwiftKey/final/en_US/quadgram_dts")
+format(object.size(quad), units = "Mb")
+rm(quadgrams)
+ls()
+save(uni, bi, tri, quad, file = "Coursera-SwiftKey/final/en_US/dts")
+```
+

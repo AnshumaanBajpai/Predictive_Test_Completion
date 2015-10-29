@@ -1,0 +1,569 @@
+---
+title: "Milestone Report (Data Science Capstone)"
+author: "Anshumaan Bajpai"
+date: "July 24, 2015"
+output: html_document
+---
+
+# Introduction \
+
+The aim of the datascience capstone project is to build a predictive text algorithm and this report provides a rudimentary summary of the dataset that I will be using to build the product and a brief description of my approach to the problem.
+
+Some general comments for the report are:
+
+- R code chunks are presented at the end so as to make the report concise
+- Use of technical terms has been avoided so that the report is easy to read for non-data scientist
+- For this analysis, profanities have not been removed since we are just trying to get an understanding of the data at hand. However, they will be removed for the prediction aspect of the modeling
+
+On downloading the data, it is found that there are four sets of three files. The four sets are files in 4 different languages. For this project we are using only the ones in english. The files that will be used in this project are as follows:
+
+```{r, section_1, echo=FALSE, eval=TRUE, tidy=TRUE, warning=FALSE, message=FALSE}
+
+library(knitr)
+library(tm) # the package for text mining
+library(RWeka) # a package to aid tm
+library(ggplot2) # package to plot
+library(wordcloud)
+
+# Set working directory
+setwd("C:/Users/Anshumaan/Desktop/Notre Dame (abajpai1@nd.edu)/Coursera/Paid/Data_Science_Specialization/Capstone")
+
+# Download the dataset if not downloaded already
+setInternet2(use = TRUE) # Needed to download from https links
+if(!file.exists("Coursera-SwiftKey.zip")){
+        download.file(url = "https://d396qusza40orc.cloudfront.net/dsscapstone/dataset/Coursera-SwiftKey.zip", destfile = "Coursera-SwiftKey.zip", quiet = TRUE)
+}
+
+# Unzipping the downloaded dataset
+if(!file.exists("Coursera-SwiftKey")){
+        unzip("Coursera-SwiftKey.zip", exdir = "Coursera-SwiftKey")
+}
+
+# Analyzing the contents of unzipped folder
+
+list.files("Coursera-SwiftKey/final/en_US", recursive = TRUE)
+
+# We need to work with en_US files.
+```
+
+The three files mentioned above will be used to build the entire prediction algorithm. However, it is important to get some general idea about the text files that are being dealt with. Some basic information about the three files are:
+
+```{r, section_2, echo=FALSE, eval=TRUE, cache=TRUE, warning=FALSE, message=FALSE}
+
+## Analyzing en_US.blogs.txt
+
+# Size of en_US.blogs.txt in Mb
+s_blogs <- file.size("Coursera-SwiftKey/final/en_US/en_US.blogs.txt")/(1024*1024)
+
+# Connection to the blog
+con_blogs <- file("Coursera-SwiftKey/final/en_US/en_US.blogs.txt","rb",encoding="UTF-8")
+
+# Read the file as a characted vector
+blogs_r = readLines(con_blogs, skipNul = TRUE, warn = FALSE)
+
+# Close the connection
+close(con_blogs)
+
+# No of lines in en_US.blogs.txt
+lines_blogs_r <- length(blogs_r)
+
+# Ensure all the UTF-8 are converted to ASCII
+blogs_r <- iconv(blogs_r, to = "ASCII", sub = "")
+
+cat("The file en_US.blogs.txt is ", s_blogs, "Mb in size and has ", lines_blogs_r, " lines.")
+
+## Reading in news and twitter files
+
+# News
+s_news <- file.size("Coursera-SwiftKey/final/en_US/en_US.news.txt")/(1024*1024)
+con_news <- file("Coursera-SwiftKey/final/en_US/en_US.news.txt","rb",encoding="UTF-8")
+news_r = readLines(con_news, skipNul = TRUE, warn = FALSE)
+close(con_news)
+lines_news_r <- length(news_r)
+news_r <- iconv(news_r, to = "ASCII", sub = "")
+cat("The file en_US.news.txt is ", s_news, "Mb in size and has ", lines_news_r, " lines.")
+
+# twitter
+s_twitter <- file.size("Coursera-SwiftKey/final/en_US/en_US.twitter.txt")/(1024*1024)
+con_twitter <- file("Coursera-SwiftKey/final/en_US/en_US.twitter.txt","rb",encoding="UTF-8")
+twitter_r = readLines(con_twitter, skipNul = TRUE, warn = FALSE)
+close(con_twitter)
+lines_twitter_r <- length(twitter_r)
+twitter_r <- iconv(twitter_r, to = "ASCII", sub = "")
+cat("The file en_US.twitter.txt is ", s_twitter, "Mb in size and has ", lines_twitter_r, " lines.")
+```
+
+Now we look at each of the files and do some exploratory analysis on each file. Since this analysis is about predicting the next word, the stopwords have not been removed from the text.
+
+
+# Basic Analysis
+```{r, section_3, echo=FALSE, eval=TRUE, cache=TRUE, warning=FALSE, message=FALSE}
+stopWords <- stopwords("en")
+
+# We define a function to analyze a given document
+file_analyze <- function(x){
+        # Convert everything to lowercase
+        docs_summary <- tolower(x)
+        # remove other punctuation marks
+        docs_summary <- gsub("[\\.|(){}^$*+?,:;-]", "", docs_summary)
+        # remove excess white space
+        docs_summary <- gsub(" +", " ", docs_summary)
+        docs_single <- unlist(strsplit(docs_summary, split = " "))
+        docs_single <- docs_single[!(docs_single %in% stopWords)]
+        docs_single <- as.data.frame(sort(table(docs_single), decreasing = TRUE))
+        docs_single[,2] <- rownames(docs_single)
+        names(docs_single) <- c("count", "word")
+        docs_single$word <- factor(docs_single$word, levels=docs_single$word)
+        return(docs_single)
+}
+```
+In the first set of analysis, we look at the complete files for the basic analysis and later on for n-grams, we take only a sample set from the complete files.
+
+
+## en_US.blogs
+```{r, section_4, echo=FALSE, eval=TRUE, cache=TRUE, warning=FALSE, message=FALSE}
+# acquire data
+blogs_single <- file_analyze(blogs_r)
+cat("The total number of words in en_US.blogs.txt are ", sum(blogs_single[,1]))
+cat("The 20 most frequent words used in this document are depicted in the bar chart.")
+cat("The number of unique words needed to cover 50% and 90% of the total words used\n in blogs are ",
+    min(which(cumsum(blogs_single[,1]) > 0.5*sum(blogs_single[,1]))), " and ",
+    min(which(cumsum(blogs_single[,1]) > 0.9*sum(blogs_single[,1]))), " respectively.")
+
+# bar chart for the 20 most frequent words
+ggplot(blogs_single[1:20,],aes(x=word,y=count))+geom_bar(stat="identity", fill = "green", colour = "white") + coord_flip() + ggtitle("en_US.blogs.txt")
+```
+
+
+## en_US.news
+```{r, section_5, echo=FALSE, eval=TRUE, cache=TRUE, warning=FALSE}
+# acquire data
+news_single <- file_analyze(news_r)
+cat("The total number of words in en_US.news.txt are ", sum(news_single[,1]))
+cat("The 20 most frequent words used in this document are depicted in the bar chart.")
+cat("The number of unique words needed to cover 50% and 90% of the total words used\n in news are ",
+    min(which(cumsum(news_single[,1]) > 0.5*sum(news_single[,1]))), " and ",
+    min(which(cumsum(news_single[,1]) > 0.9*sum(news_single[,1]))), " respectively.")
+
+# bar chart for the 20 most frequent words
+ggplot(news_single[1:20,],aes(x=word,y=count))+geom_bar(stat="identity", fill = "green", colour = "white") + coord_flip() + ggtitle("en_US.news.txt")
+```
+
+
+## en_US.twitter
+```{r, section_6, echo=FALSE, eval=TRUE, cache=TRUE, warning=FALSE}
+# acquire data
+twitter_single <- file_analyze(twitter_r)
+cat("The total number of words in en_US.twitter.txt are ", sum(twitter_single[,1]))
+cat("The 20 most frequent words used in this document are depicted in the bar chart.")
+cat("The number of unique words needed to cover 50% and 90% of the total words used\n in twitter are ",
+    min(which(cumsum(twitter_single[,1]) > 0.5*sum(twitter_single[,1]))), " and ",
+    min(which(cumsum(twitter_single[,1]) > 0.9*sum(twitter_single[,1]))), " respectively.")
+
+# bar chart for the 20 most frequent words
+ggplot(twitter_single[1:20,],aes(x=word,y=count))+geom_bar(stat="identity", fill = "green", colour = "white") + coord_flip() + ggtitle("en_US.twitter.txt")
+```
+
+Now that we have looked at the summary of the full documents, we look only at a subset of the complete datafiles to build our model. We take 5% of the data from each file and save it to training files and the rest to testing files.
+\newpage
+
+# Modeling with small training set
+```{r, section_7, echo=FALSE, eval=TRUE, cache=TRUE}
+
+set.seed(123) # Setting the seed so as to have reproducibility
+
+# Saving blogs data
+fr = 0.005
+train_blogs <- sample(1:length(blogs_r), floor(fr*length(blogs_r)), replace=FALSE) # select indices
+writeLines(blogs_r[train_blogs], con = "Coursera-SwiftKey/final/en_US/blogs_train.txt") # training data
+writeLines(blogs_r[-train_blogs], con = "Coursera-SwiftKey/final/en_US/blogs_test.txt") # testing data
+
+# Saving news data
+train_news <- sample(1:length(news_r), floor(fr*length(news_r)), replace=FALSE)
+writeLines(news_r[train_news], con = "Coursera-SwiftKey/final/en_US/news_train.txt")
+writeLines(news_r[-train_news], con = "Coursera-SwiftKey/final/en_US/news_test.txt")
+
+# Saving twitter data
+train_twitter <- sample(1:length(twitter_r), floor(fr*length(twitter_r)), replace=FALSE)
+writeLines(twitter_r[train_twitter], con = "Coursera-SwiftKey/final/en_US/twitter_train.txt")
+writeLines(twitter_r[-train_twitter], con = "Coursera-SwiftKey/final/en_US/twitter_test.txt")
+
+merged_data <- c(blogs_r[train_blogs], news_r[train_news], twitter_r[train_twitter])
+```
+
+A word cloud is a useful way to represent an overall summary of the kind and frequency of words used in a given text. We compare the word clouds of the three sources of text.
+
+```{r, section_8, eval=TRUE, echo=FALSE, warning=FALSE, message=FALSE, cache=TRUE}
+
+# A function to process the corpus into word cloud suitable form
+c_wordcloud <- function(vec_in){
+        corpus_out <- VCorpus(VectorSource(vec_in))
+        corpus_out <- tm_map(corpus_out, stripWhitespace)
+        corpus_out <- tm_map(corpus_out, content_transformer(tolower))
+        corpus_out <- tm_map(corpus_out, removeWords, stopwords(kind = "en"))
+        corpus_out <- tm_map(corpus_out, removePunctuation)
+        corpus_out <- tm_map(corpus_out, stemDocument)
+        return(corpus_out)
+}
+
+c_blogs <- c_wordcloud(blogs_r[train_blogs]) # corpus for blogs
+c_news <- c_wordcloud(news_r[train_news]) # corpus for news
+c_twitter <- c_wordcloud(twitter_r[train_twitter]) # corpus for twitter
+```
+
+```{r, section_9, eval=TRUE, echo=FALSE, warning=FALSE, message=FALSE, cache=TRUE}
+layout(matrix(1:3, nrow=1))
+
+#Wordcloud for blogs
+wordcloud(c_blogs, scale=c(3,0.5), max.words=30, random.order=FALSE, rot.per=0.35, use.r.layout=FALSE, colors=brewer.pal(8, "Dark2"))
+text(x=0.5, y=1.1, "Blogs", cex = 2)
+
+#Wordcloud for news
+wordcloud(c_news, scale=c(4,0.5), max.words=30, random.order=FALSE, rot.per=0.35, use.r.layout=FALSE, colors=brewer.pal(8, "Dark2"))
+text(x=0.5, y=1.1, "News", cex = 2)
+
+#Wordcloud for twitter
+wordcloud(c_twitter, scale=c(3,0.5), max.words=30, random.order=FALSE, rot.per=0.35, use.r.layout=FALSE, colors=brewer.pal(8, "Dark2"))
+text(x=0.5, y=1.1, "Twitter", cex = 2)
+```
+
+We find that News articles feature "said" a number of times which is understandable considering that the news usually reports what someone said about any issue. Twitter on the other hand sees a lot of "lol", "just" and "thank".
+
+
+## Corpus
+For further analysis, a corpus is prepared by merging the three training datasets. Further analysis for n-grams is performed on this corpus. Since the overall goal is to do text prediction, we do not remove the stopwords in this as they are critical text prediction component and aid in sentence formation.
+
+```{r, section_10, echo=FALSE, eval=TRUE, cache=TRUE, warning=FALSE, message=FALSE}
+
+# removing the large datasets from the workspace
+rm(blogs_r, news_r, twitter_r)
+
+# generating a corpus
+merged_data <- gsub("\\.+", "\\.", merged_data)
+merged_data <- gsub("''|#", "", merged_data)
+merged_data <- gsub(" [Aa]\\.[Mm]", "am", merged_data)
+merged_data <- gsub(" [Pp]\\.[Mm]", "pm", merged_data)
+
+corpus_Capstone <- VCorpus(VectorSource(merged_data))
+corpus_Capstone <- tm_map(corpus_Capstone, stripWhitespace) # Stripping excess whitespace
+corpus_Capstone <- tm_map(corpus_Capstone, content_transformer(tolower)) # converting to lowercase
+
+# Unigram tokenizer
+UnigramTokenizer <- function(x){
+        NGramTokenizer(x, Weka_control(delimiters = " .~(),;:\"?!/-", min = 1, max = 1))
+}
+
+# Bigram tokenizer
+BigramTokenizer <- function(x){
+        NGramTokenizer(x, Weka_control(delimiters = " .~(),;:\"?!/-", min = 2, max = 2))
+}
+
+# trigram tokenizer look at period(.)
+TrigramTokenizer <- function(x){
+        NGramTokenizer(x, Weka_control(delimiters = " .~(),;:\"?!/-", min = 3, max = 3))
+}
+
+unigrams <- DocumentTermMatrix(corpus_Capstone, control = list(tokenize = UnigramTokenizer, removeNumbers=FALSE)) # Generating Unigrams
+bigrams <- DocumentTermMatrix(corpus_Capstone, control = list(tokenize = BigramTokenizer, removeNumbers=FALSE))
+trigrams <- DocumentTermMatrix(corpus_Capstone, control = list(tokenize = TrigramTokenizer, removeNumbers=FALSE))
+```
+
+Here we look at the most frequently occuring unigram, bigrams and trigrams.
+
+```{r, section_11, eval=TRUE, echo=FALSE, cache=TRUE, warning=FALSE, message=FALSE}
+
+unigrams_rmsp <- as.matrix(removeSparseTerms(unigrams, 0.98))
+uni_freq <- sort(colSums(unigrams_rmsp), decreasing = TRUE)
+cat("Top 50 most frequent unigrams based on a 5% sampling of entire english dataset is")
+head(uni_freq, n = 50)
+
+bigrams_rmsp <- as.matrix(removeSparseTerms(bigrams, 0.99))
+bi_freq <- sort(colSums(bigrams_rmsp), decreasing = TRUE)
+cat("Top 30 most frequent bigrams based on a 5% sampling of entire english dataset is")
+head(bi_freq, n = 30)
+
+trigrams_rmsp <- as.matrix(removeSparseTerms(trigrams, 0.998))
+tri_freq <- sort(colSums(trigrams_rmsp), decreasing = TRUE)
+cat("Top 15 most frequent trigrams based on a 5% sampling of entire english dataset is")
+head(tri_freq, n = 15)
+```
+We can see that their is some misclassification of n-grams. We find that the some of the bigrams have been classified as a trigram while a couple of unigrams have been classified as bigram. This probably has something to do with the way the delimiters are working to split the strings.
+
+
+# Strategy for the rest of the project
+In the work so far, we have looked at a summary of the dataset that we have. The next goal is to write an algorithm to predict the next word of a sentence based on a 2-gram/3-gram. So the essential steps to be performed for this project are listed below:
+
+- Work on smoothing algorithms for sparse terms
+- Study Turing algorithm/Kneser-Ney algorithm/Stupid back-off and apply these in my prediction model to improve its prediction efficiency
+- Test the model on a testing set and optimize the parameters used so far
+- Incorporate "Starting of Sentence" and "End of Sentence" features in term document matrix creation
+
+The shiny app that I plan to built will have the option of selecting whether the user knows where the test phrase is from. Depending on whether its from news or blog or twitter, the app will accordingly use the dataset from the same source to make the prediction. In case the user is not sure about the source of phrase, a general algorithm that takes a sample for all three kinds of datasets will be used to make the prediction.
+
+
+# R Code Chunks
+
+
+## Download data
+```{r, section_1r, echo=TRUE, eval=FALSE}
+
+library(knitr)
+library(tm) # the package for text mining
+library(RWeka) # a package to aid tm
+library(ggplot2) # package to plot
+library(wordcloud)
+
+# Set working directory
+setwd("C:/Users/Anshumaan/Desktop/Notre Dame (abajpai1@nd.edu)/Coursera/Paid/Data_Science_Specialization/Capstone")
+
+# Download the dataset if not downloaded already
+setInternet2(use = TRUE) # Needed to download from https links
+if(!file.exists("Coursera-SwiftKey.zip")){
+        download.file(url = "https://d396qusza40orc.cloudfront.net/dsscapstone/dataset/Coursera-SwiftKey.zip", destfile = "Coursera-SwiftKey.zip", quiet = TRUE)
+}
+
+# Unzipping the downloaded dataset
+if(!file.exists("Coursera-SwiftKey")){
+        unzip("Coursera-SwiftKey.zip", exdir = "Coursera-SwiftKey")
+}
+
+# Analyzing the contents of unzipped folder
+
+list.files("Coursera-SwiftKey/final/en_US", recursive = TRUE)
+
+# We need to work with en_US files.
+```
+
+
+## Reading in files
+```{r, section_2r, echo=TRUE, eval=FALSE}
+
+## Analyzing en_US.blogs.txt
+
+# Size of en_US.blogs.txt in Mb
+s_blogs <- file.size("Coursera-SwiftKey/final/en_US/en_US.blogs.txt")/(1024*1024)
+
+# Connection to the blog
+con_blogs <- file("Coursera-SwiftKey/final/en_US/en_US.blogs.txt","rb",encoding="UTF-8")
+
+# Read the file as a characted vector
+blogs_r = readLines(con_blogs, skipNul = TRUE, warn = FALSE)
+
+# Close the connection
+close(con_blogs)
+
+# No of lines in en_US.blogs.txt
+lines_blogs_r <- length(blogs_r)
+
+# Ensure all the UTF-8 are converted to ASCII
+blogs_r <- iconv(blogs_r, to = "ASCII", sub = "")
+
+cat("The file en_US.blogs.txt is ", s_blogs, "Mb in size and has ", lines_blogs_r, " lines.")
+
+## Reading in news and twitter files
+
+# News
+s_news <- file.size("Coursera-SwiftKey/final/en_US/en_US.news.txt")/(1024*1024)
+con_news <- file("Coursera-SwiftKey/final/en_US/en_US.news.txt","rb",encoding="UTF-8")
+news_r = readLines(con_news, skipNul = TRUE, warn = FALSE)
+close(con_news)
+lines_news_r <- length(news_r)
+news_r <- iconv(news_r, to = "ASCII", sub = "")
+cat("The file en_US.news.txt is ", s_news, "Mb in size and has ", lines_news_r, " lines.")
+
+# twitter
+s_twitter <- file.size("Coursera-SwiftKey/final/en_US/en_US.twitter.txt")/(1024*1024)
+con_twitter <- file("Coursera-SwiftKey/final/en_US/en_US.twitter.txt","rb",encoding="UTF-8")
+twitter_r = readLines(con_twitter, skipNul = TRUE, warn = FALSE)
+close(con_twitter)
+lines_twitter_r <- length(twitter_r)
+twitter_r <- iconv(twitter_r, to = "ASCII", sub = "")
+cat("The file en_US.twitter.txt is ", s_twitter, "Mb in size and has ", lines_twitter_r, " lines.")
+```
+
+
+## Function to clean the dataset
+```{r, section_3r, echo=TRUE, eval=FALSE}
+stopWords <- stopwords("en")
+
+# We define a function to analyze a given document
+file_analyze <- function(x){
+        # Convert everything to lowercase
+        docs_summary <- tolower(x)
+        # remove other punctuation marks
+        docs_summary <- gsub("[\\.|(){}^$*+?,:;-]", "", docs_summary)
+        # remove excess white space
+        docs_summary <- gsub(" +", " ", docs_summary)
+        docs_single <- unlist(strsplit(docs_summary, split = " "))
+        docs_single <- docs_single[!(docs_single %in% stopWords)]
+        docs_single <- as.data.frame(sort(table(docs_single), decreasing = TRUE))
+        docs_single[,2] <- rownames(docs_single)
+        names(docs_single) <- c("count", "word")
+        docs_single$word <- factor(docs_single$word, levels=docs_single$word)
+        return(docs_single)
+}
+```
+
+
+## Analyze blog
+```{r, section_4r, echo=TRUE, eval=FALSE}
+# acquire data
+blogs_single <- file_analyze(blogs_r)
+cat("The total number of words in en_US.blogs.txt are ", sum(blogs_single[,1]))
+cat("The 20 most frequent words used in this document are depicted in the bar chart.")
+cat("The number of unique words needed to cover 50% and 90% of the total words used\n in blogs are ",
+    min(which(cumsum(blogs_single[,1]) > 0.5*sum(blogs_single[,1]))), " and ",
+    min(which(cumsum(blogs_single[,1]) > 0.9*sum(blogs_single[,1]))), " respectively.")
+
+# bar chart for the 20 most frequent words
+ggplot(blogs_single[1:20,],aes(x=word,y=count))+geom_bar(stat="identity", fill = "green", colour = "white") + coord_flip() + ggtitle("en_US.blogs.txt")
+```
+
+
+## Analyze news
+```{r, section_5r, echo=TRUE, eval=FALSE}
+# acquire data
+news_single <- file_analyze(news_r)
+cat("The total number of words in en_US.news.txt are ", sum(news_single[,1]))
+cat("The 20 most frequent words used in this document are depicted in the bar chart.")
+cat("The number of unique words needed to cover 50% and 90% of the total words used\n in news are ",
+    min(which(cumsum(news_single[,1]) > 0.5*sum(news_single[,1]))), " and ",
+    min(which(cumsum(news_single[,1]) > 0.9*sum(news_single[,1]))), " respectively.")
+
+# bar chart for the 20 most frequent words
+ggplot(news_single[1:20,],aes(x=word,y=count))+geom_bar(stat="identity", fill = "green", colour = "white") + coord_flip() + ggtitle("en_US.news.txt")
+```
+
+
+## Analyze twitter
+```{r, section_6r, echo=TRUE, eval=FALSE}
+# acquire data
+twitter_single <- file_analyze(twitter_r)
+cat("The total number of words in en_US.twitter.txt are ", sum(twitter_single[,1]))
+cat("The 20 most frequent words used in this document are depicted in the bar chart.")
+cat("The number of unique words needed to cover 50% and 90% of the total words used\n in twitter are ",
+    min(which(cumsum(twitter_single[,1]) > 0.5*sum(twitter_single[,1]))), " and ",
+    min(which(cumsum(twitter_single[,1]) > 0.9*sum(twitter_single[,1]))), " respectively.")
+
+# bar chart for the 20 most frequent words
+ggplot(twitter_single[1:20,],aes(x=word,y=count))+geom_bar(stat="identity", fill = "green", colour = "white") + coord_flip() + ggtitle("en_US.twitter.txt")
+```
+
+
+# Modeling with small training set
+```{r, section_7r, echo=TRUE, eval=FALSE}
+
+set.seed(123) # Setting the seed so as to have reproducibility
+
+# Saving blogs data
+fr = 0.05
+train_blogs <- sample(1:length(blogs_r), floor(fr*length(blogs_r)), replace=FALSE) # select indices
+writeLines(blogs_r[train_blogs], con = "Coursera-SwiftKey/final/en_US/blogs_train.txt") # training data
+writeLines(blogs_r[-train_blogs], con = "Coursera-SwiftKey/final/en_US/blogs_test.txt") # testing data
+
+# Saving news data
+train_news <- sample(1:length(news_r), floor(fr*length(news_r)), replace=FALSE)
+writeLines(news_r[train_news], con = "Coursera-SwiftKey/final/en_US/news_train.txt")
+writeLines(news_r[-train_news], con = "Coursera-SwiftKey/final/en_US/news_test.txt")
+
+# Saving twitter data
+train_twitter <- sample(1:length(twitter_r), floor(fr*length(twitter_r)), replace=FALSE)
+writeLines(twitter_r[train_twitter], con = "Coursera-SwiftKey/final/en_US/twitter_train.txt")
+writeLines(twitter_r[-train_twitter], con = "Coursera-SwiftKey/final/en_US/twitter_test.txt")
+
+merged_data <- c(blogs_r[train_blogs], news_r[train_news], twitter_r[train_twitter])
+```
+
+
+## Creating wordclouds
+```{r, section_8r, eval=FALSE, echo=TRUE}
+
+# A function to process the corpus into word cloud suitable form
+c_wordcloud <- function(vec_in){
+        corpus_out <- VCorpus(VectorSource(vec_in))
+        corpus_out <- tm_map(corpus_out, stripWhitespace)
+        corpus_out <- tm_map(corpus_out, content_transformer(tolower))
+        corpus_out <- tm_map(corpus_out, removeWords, stopwords(kind = "en"))
+        corpus_out <- tm_map(corpus_out, removePunctuation)
+        corpus_out <- tm_map(corpus_out, stemDocument)
+        return(corpus_out)
+}
+
+c_blogs <- c_wordcloud(blogs_r[train_blogs]) # corpus for blogs
+c_news <- c_wordcloud(news_r[train_news]) # corpus for news
+c_twitter <- c_wordcloud(twitter_r[train_twitter]) # corpus for twitter
+```
+
+
+```{r, section_9r, eval=FALSE, echo=TRUE}
+layout(matrix(1:3, nrow=1))
+
+#Wordcloud for blogs
+wordcloud(c_blogs, scale=c(3,0.5), max.words=30, random.order=FALSE, rot.per=0.35, use.r.layout=FALSE, colors=brewer.pal(8, "Dark2"))
+text(x=0.5, y=1.1, "Blogs", cex = 2)
+
+#Wordcloud for news
+wordcloud(c_news, scale=c(4,0.5), max.words=30, random.order=FALSE, rot.per=0.35, use.r.layout=FALSE, colors=brewer.pal(8, "Dark2"))
+text(x=0.5, y=1.1, "News", cex = 2)
+
+#Wordcloud for twitter
+wordcloud(c_twitter, scale=c(3,0.5), max.words=30, random.order=FALSE, rot.per=0.35, use.r.layout=FALSE, colors=brewer.pal(8, "Dark2"))
+text(x=0.5, y=1.1, "Twitter", cex = 2)
+```
+
+
+## Corpus
+```{r, section_10r, echo=TRUE, eval=FALSE}
+
+# removing the large datasets from the workspace
+rm(blogs_r, news_r, twitter_r)
+
+# generating a corpus
+merged_data <- gsub("\\.+", "\\.", merged_data)
+merged_data <- gsub("''|#", "", merged_data)
+merged_data <- gsub(" [Aa]\\.[Mm]", "am", merged_data)
+merged_data <- gsub(" [Pp]\\.[Mm]", "pm", merged_data)
+
+corpus_Capstone <- VCorpus(VectorSource(merged_data))
+corpus_Capstone <- tm_map(corpus_Capstone, stripWhitespace) # Stripping excess whitespace
+corpus_Capstone <- tm_map(corpus_Capstone, content_transformer(tolower)) # converting to lowercase
+
+# Unigram tokenizer
+UnigramTokenizer <- function(x){
+        NGramTokenizer(x, Weka_control(delimiters = " .~(),;:\"?!/-", min = 1, max = 1))
+}
+
+# Bigram tokenizer
+BigramTokenizer <- function(x){
+        NGramTokenizer(x, Weka_control(delimiters = " .~(),;:\"?!/-", min = 2, max = 2))
+}
+
+# trigram tokenizer look at period(.)
+TrigramTokenizer <- function(x){
+        NGramTokenizer(x, Weka_control(delimiters = " .~(),;:\"?!/-", min = 3, max = 3))
+}
+
+unigrams <- DocumentTermMatrix(corpus_Capstone, control = list(tokenize = UnigramTokenizer, removeNumbers=TRUE)) # Generating Unigrams
+bigrams <- DocumentTermMatrix(corpus_Capstone, control = list(tokenize = BigramTokenizer, removeNumbers=TRUE))
+trigrams <- DocumentTermMatrix(corpus_Capstone, control = list(tokenize = TrigramTokenizer, removeNumbers=TRUE))
+```
+
+
+## High frequency n-grams
+```{r, section_11r, echo=TRUE, eval=FALSE}
+
+unigrams_rmsp <- as.matrix(removeSparseTerms(unigrams, 0.98))
+uni_freq <- sort(colSums(unigrams_rmsp), decreasing = TRUE)
+cat("Top 50 most frequent unigrams based on a 5% sampling of entire english dataset is")
+head(uni_freq, n = 50)
+
+bigrams_rmsp <- as.matrix(removeSparseTerms(bigrams, 0.99))
+bi_freq <- sort(colSums(bigrams_rmsp), decreasing = TRUE)
+cat("Top 30 most frequent bigrams based on a 5% sampling of entire english dataset is")
+head(bi_freq, n = 30)
+
+trigrams_rmsp <- as.matrix(removeSparseTerms(trigrams, 0.998))
+tri_freq <- sort(colSums(trigrams_rmsp), decreasing = TRUE)
+cat("Top 15 most frequent trigrams based on a 5% sampling of entire english dataset is")
+head(uni_freq, n = 15)
+```
